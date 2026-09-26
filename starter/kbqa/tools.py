@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import ast
 import threading
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -49,15 +50,40 @@ class DataTools:
             conn.close()
             self._local.conn = None
 
+
+
     def _where(self, start: str, end: str, store_id=None, product_id=None) -> tuple[str, list]:
-        clause = ["date >= ?", "date < ?"]
+        # 门店数字 -> Sxx编码映射
+        STORE_MAP = {
+            1: "S01",
+            2: "S02",
+            3: "S03",
+            4: "S04",
+            5: "S05"
+        }
+        clause = ["date >= ?", "date <= ?"]
         params: list[Any] = [start, end]
+
+        # 处理store_id：字符串列表 "[1,2]" 转成Sxx编码列表
         if store_id:
-            clause.append("store_id = ?")
-            params.append(store_id.strip().upper())
+            raw_list = ast.literal_eval(store_id)
+            # 过滤合法门店编号，映射为S01/S02
+            store_codes = [STORE_MAP[num] for num in raw_list if num in STORE_MAP]
+            if store_codes:
+                # 生成 IN 条件，有N个门店就写N个?占位符
+                placeholders = ", ".join(["?"] * len(store_codes))
+                clause.append(f"store_id IN ({placeholders})")
+                params.extend(store_codes)
+
+        # 处理product_id
         if product_id:
-            clause.append("product_id = ?")
-            params.append(product_id.strip().upper())
+            raw_p_list = ast.literal_eval(product_id)
+            pid_list = [p.strip().upper() for p in raw_p_list if p.strip()]
+            if pid_list:
+                placeholders = ", ".join(["?"] * len(pid_list))
+                clause.append(f"product_id IN ({placeholders})")
+                params.extend(pid_list)
+
         return " AND ".join(clause), params
 
     # -- 元信息 -----------------------------------------------------------------
