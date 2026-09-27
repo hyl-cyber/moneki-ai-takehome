@@ -10,7 +10,7 @@
 | 假设 | Planner没有统一总控开关，意图分支逻辑耦合，无法单独关闭数据库查询；业务类问题没有做路由隔离。 |
 | 验证 | 新增enable_hybrid布尔开关，设置`enable_hybrid=False`，使用swagger接口测试：查询目标/价格类问题，plan.intent强制为doc，`needs_data=False`，不会执行SQL查询。执行eval批量评测，所有metrics/data/hybrid题目全部0分，纯文档R类题目可正常得分，行为符合预期。 |
 | 根因 | `starter/planner.py`中原意图分支没有全局开关控制，target/price/anomaly三类业务问题会直接进入混合查询逻辑；SQL查询和文档检索耦合在一起，无法单独关闭数据库查询。 |
-| 修复 | 修改`planner.py`，Planner构造函数增加enable_hybrid入参；改写意图分支，当开关关闭时，target/price/anomaly意图强制转为doc，`needs_data=False`；新增`hybrid.py`封装混合问答逻辑。commit：【填入你的commit短hash】 |
+| 修复 | 修改`planner.py`，Planner构造函数增加enable_hybrid入参；改写意图分支，当开关关闭时，target/price/anomaly意图强制转为doc，`needs_data=False`；新增`hybrid.py`封装混合问答逻辑。commit：【ab7862f】 |
 | 回归测试 | 接口回归测试：传入目标类问题，查看plan.needs_data=False，无SQL调用；eval公开题库批量评测，关闭混合模式下，数字类题目全部无法获取数据分，文档检索类保留原有得分。 |
 
 ## 缺陷2：时间解析模块无法解析`yyyy-MM`年月简写，混合查询时间窗口为空
@@ -20,7 +20,7 @@
 | 假设 | `timeparse.py`仅支持完整日期`yyyy-MM-dd`，缺少年月简写的解析分支，无法识别只包含年+月的时间。 |
 | 验证 | 构造测试用例：`parse_time("2026年6月")`返回空时间窗口；开启enable_hybrid=True，提问该类混合问题，plan的时间范围为空，SQL查询返回空数据。 |
 | 根因 | `starter/timeparse.py`时间解析正则仅匹配完整年月日，没有单独处理年月的分支，无法自动补全当月起止日期。 |
-| 修复 | 【待修复，当前作为已知缺陷保留】，本次提交增加开关规避该问题；后续可扩展正则，识别年月并自动生成当月起止日期。commit：【填入你的commit短hash】 |
+| 修复 | 【待修复，当前作为已知缺陷保留】，本次提交增加开关规避该问题；后续可扩展正则，识别年月并自动生成当月起止日期。commit：【ab7862f】 |
 | 回归测试 | 手动单元测试，输入年月文本，观察timeparse输出时间窗口；混合问答接口验证时间范围是否正确带入SQL参数。 |
 
 ## 缺陷3：BM25检索存在单字噪声权重过高，检索结果混入无关短句
@@ -30,5 +30,5 @@
 | 假设 | 原始BM25打分没有对单字token降权，单字会拉高文档分数，造成误召回。 |
 | 验证 | 在retriever.py增加单字权重SINGLE_CHAR_WEIGHT=0.3，降低单字token贡献；对比修改前后检索返回片段，无关短句明显减少。 |
 | 根因 | `starter/retriever.py`原始BM25打分没有对单字二元组做降权，单字噪声会拉高文档打分，引入无关文档。 |
-| 修复 | 在retriever.py配置单字权重常量，打分逻辑对单字token进行降权。commit：【填入你的commit短hash】 |
+| 修复 | 在retriever.py配置单字权重常量，打分逻辑对单字token进行降权。commit：【ab7862f】 |
 | 回归测试 | 检索接口测试，输入带单字关键词的查询，对比top-k返回片段；评测R类检索题目召回质量提升。 |
