@@ -114,3 +114,8 @@ def data_quality() -> dict:
         "data_period": current.data_period,
         "kb_warnings": current.index.warnings,
     }
+import uvicorn
+
+if __name__ == "__main__":
+    # 这里不用手动新建svc，代码里service()函数自带全局单例
+    uvicorn.run(app, host="127.0.0.1", port=8001)
