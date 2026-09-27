@@ -21,6 +21,7 @@ from .sessions import SessionStore
 from .toolspec import TOOL_NAMES, TOOLS
 from .tools import DataTools
 from .trace import Trace, TraceStore
+from . import hybrid
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _INT_PARAMS = {"top_k", "limit"}
@@ -36,11 +37,14 @@ class Service:
     # -- 启动与重建 -------------------------------------------------------------
 
     def rebuild(self, only_if_missing: bool = False) -> None:
+        print("【1】进入 Service.rebuild()")
         settings = self.settings
         if not only_if_missing or not settings.clean_db.exists():
             build_clean_db(settings.source_db, settings.clean_db)
         self.tools = DataTools(settings.clean_db)
         self.index = load_index(settings.kb_dir, settings.index_path, rebuild=not only_if_missing)
+        self.index = load_index(settings.kb_dir, settings.index_path, rebuild=not only_if_missing)
+        print("【2】索引加载完成")
         self.retriever = Retriever(self.index, settings.today)
         self.catalog = Catalog(
             stores=self.tools.stores(), products=self.tools.products(), aliases=self.index.aliases
@@ -50,7 +54,7 @@ class Service:
         self.answerer = Answerer(
             self.tools, self.retriever, self.catalog, settings.today, self.data_period, self.facts
         )
-        self.planner = Planner(self.catalog, settings.today, self.data_period, self._scout)
+        self.planner = Planner(self.catalog, settings.today, self.data_period, self._scout, enable_hybrid=False)
 
     def _scout(self, text: str) -> tuple[float, float]:
         """给一句话探底：它的词在知识库里有多少、检索最高分多少。
@@ -167,7 +171,11 @@ class Service:
                 },
             )
             return answer
-        except Exception:  # noqa: BLE001 - 不管里面出什么事，接口都得给个像样的回答
+        except Exception as exc:  # noqa: BLE001 - 不管里面出什么事，接口都得给个像样的回答
+            # 新增：打印完整异常堆栈
+            import traceback
+            print("\n=====捕获异常详情=====")
+            print(traceback.format_exc())
             return Answer(
                 answer="抱歉，我暂时无法回答。",
                 answer_type="refusal",
@@ -176,7 +184,9 @@ class Service:
     def _run_engine(self, plan, trace: Trace, history: list[dict]) -> Answer:
         if not self.settings.live or plan.intent == "refusal":
             started = time.perf_counter()
+            # ========== 新增hybrid分支 ==========
             answer = self.answerer.answer(plan, trace)
+            # ===================================
             trace.step("answer_mock", {"answer_type": answer.answer_type}, started=started)
             return answer
         client = LLMClient(
