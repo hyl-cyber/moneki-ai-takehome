@@ -22,6 +22,25 @@ _CAUSE_EVENT = re.compile(r"(故障|停业|整改|暂停|闭店|停售|检查|�
 class HybridAnswers:
     """混合路径。依赖 Answerer 提供的 `_call`/`_scope`/`_search`/`facts`。"""
 
+    def __init__(self, answerer):
+        self.answerer = answerer
+
+    def _call(self, *args, **kwargs):
+        return self.answerer._call(*args, **kwargs)
+
+    def _search(self, *args, **kwargs):
+        return self.answerer._search(*args, **kwargs)
+
+    def _facts(self, *args, **kwargs):
+        return self.answerer._facts(*args, **kwargs)
+
+    # 新增这一行，代理 _scope
+    def _scope(self, *args, **kwargs):
+        return self.answerer._scope(*args, **kwargs)
+
+    def _render(self, *args, **kwargs):
+        return self.answerer._render(*args, **kwargs)
+
     # -- 混合：达标 -------------------------------------------------------------
 
     def _answer_target(self, plan: Plan, trace=None) -> Answer:
