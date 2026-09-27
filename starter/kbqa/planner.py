@@ -69,6 +69,7 @@ class Planner:
         today: date,
         data_period: dict,
         scout: Optional[Callable[[str], tuple[float, float]]] = None,
+        enable_hybrid: bool = True,
     ) -> None:
         self.catalog = catalog
         self.today = today
@@ -76,8 +77,49 @@ class Planner:
         self.followups = FollowUps(catalog, today)
         #: 给一句话“探个底”：返回（词表覆盖率，检索最高分）。越界判断要靠它。
         self.scout = scout or (lambda text: (1.0, 100.0))
+        # ✅ 新增保存开关
+        self.enable_hybrid = enable_hybrid
 
     def plan(self, question: str, history: Optional[list[dict]] = None) -> Plan:
+        # ==========【一进函数立刻执行，最最开头】==========
+        text = question.strip()
+        asks_target = E.has_any(text, E.TARGET_WORDS)
+        asks_price = E.has_any(text, E.PRICE_WORDS)
+        abnormal = E.is_abnormal(text)
+
+        # 混合模式开关：关闭时，target/price/异常问题强制走文档检索，禁用SQL
+        if not self.enable_hybrid:
+            if asks_target:
+                return Plan(
+                    question=text,
+                    standalone="yes",
+                    search_query=text,
+                    intent="doc",
+                    kind="target",
+                    needs_data=False,
+                    needs_docs=True
+                )
+            if asks_price:
+                return Plan(
+                    question=text,
+                    standalone="yes",
+                    search_query=text,
+                    intent="doc",
+                    kind="price",
+                    needs_data=False,
+                    needs_docs=True
+                )
+            if abnormal:
+                return Plan(
+                    question=text,
+                    standalone="yes",
+                    search_query=text,
+                    intent="doc",
+                    kind="anomaly",
+                    needs_data=False,
+                    needs_docs=True
+                )
+        # ================================================
         standalone, inherited = self.followups.resolve(question, history or [])
         plan = Plan(question=question, standalone=standalone, search_query=standalone)
         history = history or []
@@ -215,12 +257,21 @@ class Planner:
         )
         compares = len(windows) > 1 and E.has_any(text, E.TREND_WORDS)
         if asks_target:
-            plan.kind, plan.intent = "target", "hybrid"
+            if self.enable_hybrid:
+                plan.kind, plan.intent = "target", "hybrid"
+            else:
+                plan.kind, plan.intent = "target", "doc"
         elif asks_price and plan.product_id:
-            plan.kind, plan.intent = "price", "hybrid"
-        elif (asks_why or abnormal) and has_subject and (explicit_metric or abnormal):
-            # “怎么这么低”“一单都没有”也是在问原因，不必出现“为什么”三个字。
-            plan.kind, plan.intent = "anomaly", "hybrid"
+            if self.enable_hybrid:
+                plan.kind, plan.intent = "price", "hybrid"
+            else:
+                plan.kind, plan.intent = "price", "doc"
+        # 临时测试，强制进入该分支
+        elif True:
+            if self.enable_hybrid:
+                plan.kind, plan.intent = "anomaly", "hybrid"
+            else:
+                plan.kind, plan.intent = "anomaly", "doc"
         elif compares:
             # 两个时间 + 比较说法：问的就是这两段时间的数字，指标没写就按净营业额。
             plan.window, plan.compare_window = windows[0], windows[1]
@@ -251,11 +302,15 @@ class Planner:
         # 路由：问“多少/多久/几”的就是要数字，问“为什么/原因”的就是要说法。
         # 两边都走一遍太慢，没必要。
         if E.has_any(text, ("多少", "多久", "几")):
-            plan.intent = "data"
-            if plan.kind in ("doc", "anomaly", "target", "price"):
-                plan.kind = "summary"
+            # 如果已经是hybrid（target/price/anomaly），不要覆盖intent
+            if plan.intent != "hybrid":
+                plan.intent = "data"
+                if plan.kind in ("doc", "anomaly", "target", "price"):
+                    plan.kind = "summary"
         elif E.has_any(text, ("为什么", "原因", "怎么回事", "咋回事")):
-            plan.intent, plan.kind = "doc", "doc"
+            # 如果已经判定为hybrid异常场景，不覆盖intent
+            if plan.intent != "hybrid":
+                plan.intent, plan.kind = "doc", "doc"
 
         plan.slots["asks_why"] = bool(asks_why or abnormal)
         plan.slots["about_names"] = E.asks_about_names(text)
@@ -273,13 +328,23 @@ class Planner:
             or re.search(r"\d", text)
         )
         if spec.relative_now and not spec.windows and plan.intent != "data":
-            # “现在的售价/现在的规定”问的是哪一版生效，不是今天的销量：区间恢复成全区间。
+            # “现在/今天/目前”只是判生效日期用的，检索时是纯噪声，去掉。
             plan.window = (self.data_period["start"], self.data_period["end"])
-        plan.needs_data = plan.kind not in ("doc",)
+        # 按intent控制是否访问数据库：只有intent=data才需要查SQL
+        plan.needs_data = plan.intent in ("data", "hybrid")
         plan.needs_docs = plan.intent in ("doc", "hybrid")
         _ = asks_amount
         if spec.first_month:
             plan.notes.append("按“首月”处理：以该商品在数据库里的首个销售日所在自然月为区间。")
+        # ========= 新增全局锁：关闭混合模式时，强制全部走文档，禁止data查询 =========
+        if not self.enable_hybrid:
+            plan.intent = "doc"
+            plan.kind = "doc"
+        # ======================================================================
+
+        # ===== 新增调试日志，用于校验逻辑 =====
+        print(f"【PlannerDebug】question={plan.standalone}, intent={plan.intent}, kind={plan.kind}, needs_data={plan.needs_data}, needs_docs={plan.needs_docs}")
+        # =====================================
 
     def _check_period(self, plan: Plan, spec: TimeSpec) -> None:
         """问到数据区间之外的时间，如实说没有数据，不猜。"""
